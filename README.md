@@ -76,7 +76,7 @@ $ python scripts/precheck.py ./my-miniprogram
 ## 30 秒开始
 
 ```bash
-git clone https://github.com/CC368/wechat-miniprogram-review-guide.git
+git clone https://github.com/Ywron7/wechat-miniprogram-review-guide.git
 cd wechat-miniprogram-review-guide
 
 python scripts/precheck.py <你的小程序项目根目录>
