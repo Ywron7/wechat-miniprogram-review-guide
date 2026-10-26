@@ -4,7 +4,7 @@
 小程序提审预检 · precheck.py
 
 静态扫描微信小程序项目，按提审六项检查输出 PASS / WARN / FAIL 报告。
-不联网、不上传、不修改任何文件。
+不联网、不上传；默认只读扫描，显式传入 --md 时写入指定报告文件。
 
 用法:
     python precheck.py <项目根目录>
@@ -13,7 +13,7 @@
 退出码:
     0  全部 PASS 或只有 WARN
     1  存在 FAIL
-    2  参数错误 / 找不到 app.json
+    2  参数错误 / 找不到或无法解析 app.json、pages.json / 报告写入失败
 """
 
 import argparse
@@ -21,13 +21,14 @@ import json
 import os
 import re
 import sys
+from html.parser import HTMLParser
 from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------- 词表
 
 MARKETING_WORDS = [
-    "免费", "永久免费", "最", "最好", "最佳", "第一", "首家", "顶级",
+    "免费", "永久免费", "最好", "最佳", "最高级", "第一", "首家", "顶级",
     "国家级", "官方", "正版", "授权", "认证", "一键", "神器", "必备",
     "破解", "秒杀", "全网", "万能", "无限", "终身",
 ]
@@ -105,11 +106,14 @@ class Report:
     def count(self, level):
         return sum(1 for i in self.items if i["level"] == level)
 
-    def render(self, root, cfg_path, cfg_kind):
+    def render(self, root, cfg_path, cfg_kind, scan_root=None):
         lines = []
         lines.append("# 小程序提审预检报告")
         lines.append("")
         lines.append(f"- 扫描目录：`{root}`")
+        if scan_root is not None:
+            lines.append(f"- 实际代码目录：`{scan_root}`")
+            lines.append(f"- 扫描文本文件：{sum(1 for _ in iter_files(scan_root, TEXT_EXT))} 个")
         if cfg_path:
             lines.append(f"- 项目配置：`{cfg_path}`（{cfg_kind}）")
         else:
@@ -121,7 +125,7 @@ class Report:
         lines.append(f"**FAIL {self.count('FAIL')} ｜ WARN {self.count('WARN')} ｜ PASS {self.count('PASS')}**")
         lines.append("")
         if self.count("FAIL"):
-            lines.append("> ⚠️ 存在 FAIL 项，**不要提审**。提审不会帮你发现问题，只会帮你排队一天。")
+            lines.append("> 存在可确认的结构问题，修复 FAIL 项后重新检查。")
             lines.append("")
 
         order = ["名称", "类目", "备案", "隐私", "内容安全", "提审节奏", "其他"]
@@ -141,8 +145,9 @@ class Report:
                 lines.append("")
         lines.append("---")
         lines.append("")
-        lines.append("本报告只做静态扫描，不联网、不上传。脚本扫不到的部分需要人工判断，")
-        lines.append("参见 docs/ 下对应文档。")
+        lines.append("PASS 只表示本次静态检查未命中对应问题，不代表审核通过。")
+        lines.append("WARN 是人工核查线索。动态调用、别名及后台配置不能由本脚本确认。")
+        lines.append("规则与依据见包内 docs/ 或 references/ 对应文档。")
         return "\n".join(lines)
 
 
@@ -163,24 +168,233 @@ def read_text(p, limit=2_000_000):
 
 
 def loads_lenient(text):
-    """HBuilderX 生成的 manifest.json / pages.json 常带注释和尾逗号，标准 json 会失败。"""
+    """读取 JSON 及 JSONC（注释、尾逗号），始终保留字符串内容。不是完整 JSON5。"""
+    text = text.lstrip("\ufeff")
     try:
         return json.loads(text)
-    except Exception:
+    except (ValueError, TypeError):
         pass
-    s = re.sub(r"/\*.*?\*/", "", text, flags=re.S)      # 块注释
-    s = re.sub(r"^\s*//.*$", "", s, flags=re.M)          # 行注释
-    s = re.sub(r",(\s*[}\]])", r"\1", s)                 # 尾逗号
+    chars = list(text)
+    quoted = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quoted:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                quoted = False
+        elif ch == '"':
+            quoted = True
+        elif text.startswith("//", i) or text.startswith("/*", i):
+            line_comment = text.startswith("//", i)
+            end = text.find("\n", i + 2) if line_comment else text.find("*/", i + 2)
+            if end < 0:
+                if not line_comment:
+                    return None
+                end = len(text)
+            elif not line_comment:
+                end += 2
+            for j in range(i, end):
+                if chars[j] not in "\r\n":
+                    chars[j] = " "
+            i = end
+            continue
+        i += 1
+    s = "".join(chars)
+    quoted = False
+    i = 0
+    while i < len(s):
+        if quoted:
+            if s[i] == "\\":
+                i += 2
+                continue
+            if s[i] == '"':
+                quoted = False
+        elif s[i] == '"':
+            quoted = True
+        elif s[i] == ",":
+            end = i + 1
+            while end < len(s) and s[end].isspace():
+                end += 1
+            if end < len(s) and s[end] in "}]":
+                chars[i] = " "
+        i += 1
     try:
-        return json.loads(s)
-    except Exception:
+        return json.loads("".join(chars))
+    except (ValueError, TypeError):
         return None
+
+
+def javascript_code(text):
+    """屏蔽注释、字符串及正则字面量；模板的 ${...} 仍作为代码扫描。
+
+    这是词法预处理，不做符号绑定和完整 JS/TS 语法分析。
+    """
+    chars = list(text)
+    strings = []
+
+    def blank(start, end):
+        for j in range(start, min(end, len(chars))):
+            if chars[j] not in "\r\n":
+                chars[j] = " "
+
+    def scan(i, in_expression=False):
+        depth = 0
+        regex_allowed = True
+        while i < len(text):
+            ch = text[i]
+            if text.startswith("//", i):
+                end = text.find("\n", i + 2)
+                end = len(text) if end < 0 else end
+                blank(i, end)
+                i = end
+                continue
+            if text.startswith("/*", i):
+                end = text.find("*/", i + 2)
+                end = len(text) if end < 0 else end + 2
+                blank(i, end)
+                i = end
+                continue
+            if ch in "\"'":
+                start = i
+                quote = ch
+                i += 1
+                while i < len(text):
+                    if text[i] == "\\":
+                        i += 2
+                    elif text[i] == quote:
+                        i += 1
+                        break
+                    else:
+                        i += 1
+                strings.append((start, i, text[start + 1:i - 1]))
+                blank(start, i)
+                regex_allowed = False
+                continue
+            if ch == "`":
+                blank(i, i + 1)
+                i += 1
+                while i < len(text):
+                    if text[i] == "\\":
+                        blank(i, min(i + 2, len(text)))
+                        i += 2
+                    elif text[i] == "`":
+                        blank(i, i + 1)
+                        i += 1
+                        break
+                    elif text.startswith("${", i):
+                        blank(i, i + 2)
+                        i = scan(i + 2, True)
+                    else:
+                        blank(i, i + 1)
+                        i += 1
+                regex_allowed = False
+                continue
+            if ch == "/" and regex_allowed:
+                start = i
+                i += 1
+                in_class = False
+                while i < len(text) and text[i] not in "\r\n":
+                    if text[i] == "\\":
+                        i += 2
+                        continue
+                    if text[i] == "[":
+                        in_class = True
+                    elif text[i] == "]":
+                        in_class = False
+                    elif text[i] == "/" and not in_class:
+                        i += 1
+                        while i < len(text) and text[i].isalpha():
+                            i += 1
+                        break
+                    i += 1
+                blank(start, i)
+                regex_allowed = False
+                continue
+            if ch.isalpha() or ch in "_$":
+                end = i + 1
+                while end < len(text) and (text[end].isalnum() or text[end] in "_$"):
+                    end += 1
+                regex_allowed = text[i:end] in {"return", "throw", "case", "yield", "await", "typeof", "void", "delete", "new"}
+                i = end
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                if in_expression and depth == 0:
+                    blank(i, i + 1)
+                    return i + 1
+                depth -= 1
+            if not ch.isspace():
+                regex_allowed = ch in "([{=,:;!?&|+-*%^~<>/"
+            i += 1
+        return i
+
+    scan(0)
+    return "".join(chars), strings
+
+
+def source_parts(path):
+    """分开脚本与模板；HTML 注释不会进入模板扫描。"""
+    text = read_text(path)
+    if path.suffix.lower() in {".vue", ".uvue", ".wxml"}:
+        scripts = []
+        def take_script(match):
+            scripts.append(match.group(1))
+            return "\n"
+        markup = re.sub(r"<!--.*?-->|<script\b[^>]*>(.*?)</script\s*>",
+                        lambda m: take_script(m) if m.group(1) is not None else "",
+                        text, flags=re.S | re.I)
+        return scripts, markup
+    return [text], ""
+
+
+def api_names(path, apis):
+    scripts, markup = source_parts(path)
+    found = set()
+    for script in scripts:
+        code, strings = javascript_code(script)
+        for api in apis:
+            if re.search(r"\b(?:wx|uni)\s*(?:\?\.|\.)\s*" + re.escape(api) + r"\s*(?:\?\.)?\s*\(", code):
+                found.add(api)
+            if api in {"onShareAppMessage", "onShareTimeline"} and re.search(r"\b" + api + r"\s*(?:\(|:)", code):
+                found.add(api)
+        for start, end, value in strings:
+            if value in apis and re.search(r"\b(?:wx|uni)\s*\[\s*$", code[:start]) and re.match(r"\s*\]\s*\(", code[end:]):
+                found.add(value)
+    for api in apis:
+        if re.search(r"\bopen-type\s*=\s*['\"]" + re.escape(api) + r"['\"]", markup):
+            found.add(api)
+    if "createCameraContext" in apis and re.search(r"<camera\b", markup):
+        found.add("createCameraContext")
+    return found
+
+
+class VisibleText(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def handle_starttag(self, tag, attrs):
+        self.parts.extend(value for key, value in attrs if key in {"title", "placeholder", "alt", "text"} and value)
+
+
+def visible_text(path):
+    scripts, markup = source_parts(path)
+    parser = VisibleText()
+    parser.feed(re.sub(r"{{.*?}}", "", markup, flags=re.S))
+    return "\n".join(parser.parts)
 
 
 def find_config(root):
     """找项目配置。返回 (path, kind)，kind 为 'app.json' 或 'pages.json'（uni-app）。
 
-    优先编译产物，其次源码。uni-app 项目源码里只有 pages.json，没有 app.json。
+    优先直接项目或源码，其次编译产物。后续扫描以选中配置的目录为根。
     """
     app_candidates = [
         root / "app.json",
@@ -189,24 +403,23 @@ def find_config(root):
         root / "unpackage" / "dist" / "build" / "mp-weixin" / "app.json",
         root / "miniprogram" / "app.json",
     ]
+    source_candidates = [(root / "app.json", "app.json"),
+                         (root / "src" / "app.json", "app.json"),
+                         (root / "pages.json", "pages.json"),
+                         (root / "src" / "pages.json", "pages.json")]
+    for c, kind in source_candidates:
+        if c.is_file():
+            return c, kind
+
     for c in app_candidates:
         if c.is_file():
             return c, "app.json"
-
-    pages_candidates = [
-        root / "pages.json",
-        root / "src" / "pages.json",
-        root / "dist" / "build" / "mp-weixin" / "app.json",
-    ]
-    for c in pages_candidates:
-        if c.is_file():
-            return c, "pages.json"
 
     # 兜底：任意深度找，取路径最短的
     for name, kind in (("app.json", "app.json"), ("pages.json", "pages.json")):
         found = [p for p in root.rglob(name) if not any(s in p.parts for s in SKIP_DIRS)]
         if found:
-            found.sort(key=lambda p: len(p.parts))
+            found.sort(key=lambda p: (len(p.parts), str(p)))
             return found[0], kind
     return None, None
 
@@ -270,161 +483,111 @@ def check_name(rep, cfg_data, cfg_kind, root):
             rep.add("名称", "PASS", "项目配置中没有发现标题文字",
                     f"读取的是 {cfg_kind}")
         for where, text in titles:
+            text = str(text)
             hits_m = [w for w in MARKETING_WORDS if w in text]
             hits_g = [w for w in GENERIC_WORDS if w in text]
             if hits_m:
-                rep.add("名称", "FAIL", f"标题含营销商业化词：{text}",
+                rep.add("名称", "WARN", f"标题命中待核查用语：{text}",
                         f"位置 {where}，命中 {hits_m}",
-                        "官方 1.1-2 禁止商业化用语。页面标题虽不受命名规范约束，"
-                        "但出现这些词等于给审核白送抓手，建议全部替换")
+                        "核对是否为商业宣传或与功能无关的表述；页面标题与后台注册名称分别判断，词表命中不等于违规")
             elif hits_g:
                 rep.add("名称", "WARN", f"标题含通用词：{text}",
                         f"位置 {where}，命中 {hits_g}",
-                        "页面标题不受命名规范约束，但若注册名称也是这种结构会被驳（官方 1.2.1-3）")
+                        "页面标题与后台注册名称分别核查；若注册名也使用这些词，按官方 1.2.1-3 结合完整名称判断")
             else:
                 rep.add("名称", "PASS", f"标题无明显风险词：{text}", f"位置 {where}")
 
-    # 注册名（uni-app manifest.json 的 name 通常就是注册名）
+    # 本地应用名不等同于后台注册名，只作为人工核查线索。
     app_name = read_manifest_name(root)
     if app_name:
         hits_m = [w for w in MARKETING_WORDS if w in app_name]
         hits_g = [w for w in GENERIC_WORDS if w in app_name]
         if hits_m:
-            rep.add("名称", "FAIL", f"应用名含营销商业化词：{app_name}",
+            rep.add("名称", "WARN", f"本地应用名命中待核查用语：{app_name}",
                     f"来自 manifest.json，命中 {hits_m}",
-                    "官方 1.1-2。这个值很可能就是你的注册名，必须改")
+                    "先核对后台实际注册名称，再按官方 1.1-2 判断；本地应用名不等同于注册名")
         elif hits_g:
             rep.add("名称", "WARN", f"应用名含通用词：{app_name}",
                     f"来自 manifest.json，命中 {hits_g}",
-                    "若这个名字同时是注册名，「功能词+品类词」结构会被驳（官方 1.2.1-3）。"
-                    "改成「造词/品牌词+功能词」")
+                    "先核对后台实际注册名；通用词组合的识别性需按官方 1.2.1-3 人工判断")
         else:
             rep.add("名称", "PASS", f"应用名无明显风险词：{app_name}", "来自 manifest.json")
 
 
 def check_privacy(rep, root):
-    """隐私：扫隐私接口"""
+    """只报告可识别的接口或组件线索，后台声明与用户授权另行确认。"""
     hits = {}
     for p in iter_files(root, CODE_EXT):
-        text = read_text(p)
-        for api, desc in PRIVACY_APIS.items():
-            if re.search(r"\b" + re.escape(api) + r"\b", text):
-                hits.setdefault(api, {"desc": desc, "files": []})
-                hits[api]["files"].append(str(p.relative_to(root)))
-
+        for api in api_names(p, PRIVACY_APIS):
+            hits.setdefault(api, []).append(str(p.relative_to(root)))
     if not hits:
-        rep.add("隐私", "PASS", "未发现隐私接口调用",
-                "没有调用 getUserProfile / getLocation / chooseImage 等接口",
-                "不申请就不审，这一关基本不会卡你。别自己加戏")
-        return
-
-    for api, info in sorted(hits.items()):
-        files = info["files"][:3]
-        rep.add("隐私", "WARN", f"调用了 {api}（{info['desc']}）",
-                "出现在：" + "、".join(files) + ("…" if len(info["files"]) > 3 else ""),
-                "必须配隐私指引 + 授权弹窗，且后台「用户隐私保护指引」要审核通过；"
-                "用户拒绝时功能要降级不崩溃")
-
-    # 隐私指引（注意：__usePrivacyCheck__ 自 2023-10-17 后已失效，不再作为判据）
-    app = find_app_json(root)
-    if app:
-        data = read_text(app)
-        if "__usePrivacyCheck__" in data:
-            rep.add("隐私", "WARN", "app.json 里设了 __usePrivacyCheck__",
-                    f"检查文件：{app.relative_to(root)}",
-                    "这个开关只在 2023-09-15 ~ 2023-10-17 的过渡期有效，现已失效。"
-                    "留着无害，但别指望它起任何作用；真正决定接口能不能调的，"
-                    "只有后台《用户隐私保护指引》是否审核通过")
-    rep.add("隐私", "WARN", "后台隐私指引状态无法静态扫描，需人工确认",
-            "脚本读不到 mp 后台",
-            "① 每个隐私接口都能对应到后台勾选的一项 ② 状态必须是「已通过」不是「审核中」"
-            "（审核中时接口一定报 scope not declared，清缓存换机都无效）"
-            "③ 提审表单隐私栏必须选「采集用户隐私」。详见 docs/04-privacy.md")
+        rep.add("隐私", "PASS", "本次扫描未检出已知隐私接口或组件",
+                "已排除注释和普通字符串；动态调用、别名及自建表单收集不在此结论内")
+    for api, files in sorted(hits.items()):
+        rep.add("隐私", "WARN", f"检出 {api}（{PRIVACY_APIS[api]}）",
+                "出现在：" + "、".join(files[:3]),
+                "核对对应版本的信息类型声明、生效状态及用户同意同步；拒绝授权时应正常降级")
+    rep.add("隐私", "WARN", "隐私声明与用户授权需人工确认",
+            "脚本无法读取后台，也不能验证用户已同意",
+            "先确认接口对应的信息类型已声明，再确认对应版本生效及用户授权。"
+            "errno 112 应先补齐缺失声明再等待生效；2023-10-17 后无需靠 __usePrivacyCheck__ 启用隐私功能。"
+            "详见隐私文档")
 
 
 def check_content_safety(rep, root):
-    """内容安全：内容产出 + 外流路径"""
+    """内容接口只能提供核查线索，不能直接证明违反 5.18。"""
     found = {}
     for p in iter_files(root, CODE_EXT):
-        text = read_text(p)
-        for api, desc in CONTENT_APIS.items():
-            if re.search(r"\b" + re.escape(api) + r"\b", text):
-                found.setdefault(api, {"desc": desc, "files": []})
-                found[api]["files"].append(str(p.relative_to(root)))
-
-    produces = any(k in found for k in
-                   ("canvasToTempFilePath", "saveImageToPhotosAlbum", "saveVideoToPhotosAlbum"))
-    shares = any(k in found for k in
-                 ("onShareAppMessage", "onShareTimeline", "shareAppMessage"))
-    leaves = produces or shares
-
+        for api in api_names(p, CONTENT_APIS):
+            found.setdefault(api, []).append(str(p.relative_to(root)))
     if not found:
-        rep.add("内容安全", "PASS", "未发现内容产出或外流路径",
-                "没有 canvas 导出、存相册、分享相关调用",
-                "5.18 射程外，这一关风险低")
-        return
-
-    for api, info in sorted(found.items()):
-        files = info["files"][:3]
-        rep.add("内容安全", "WARN", f"发现 {api}（{info['desc']}）",
-                "出现在：" + "、".join(files) + ("…" if len(info["files"]) > 3 else ""),
-                "见 docs/05-content-safety.md")
-
-    if produces and leaves:
-        rep.add("内容安全", "FAIL",
-                "产品形态落在 5.18 射程内：既产出新内容，又让内容离开小程序",
-                f"产出类接口 {[k for k in found if k in ('canvasToTempFilePath','saveImageToPhotosAlbum')]}；"
-                f"外流类接口 {[k for k in found if k in ('onShareAppMessage','onShareTimeline','shareAppMessage')]}",
-                "官方口径：只要「处理用户提供的内容并产出新内容」，就要求你对内容做识别。"
-                "界面显不显示、上传不上传都不改变这个要求。三条路选一条："
-                "① 接服务端内容安全接口（要钱要后端）② 改形态让内容不出本机也不产出新内容 ③ 不做这个形态")
-
-    # 越界：工具类目不得有社交功能
+        rep.add("内容安全", "PASS", "本次扫描未检出已知内容生成、保存或分享接口",
+                "不等于内容安全豁免；动态调用、别名和服务端功能需另查")
+    for api, files in sorted(found.items()):
+        rep.add("内容安全", "WARN", f"检出 {api}（{CONTENT_APIS[api]}）",
+                "出现在：" + "、".join(files[:3]),
+                "确认处理对象是否为用户内容、内容去向以及现有检测机制；接口名称本身不构成违规结论")
+    generated = [a for a in found if a == "canvasToTempFilePath"]
+    saved = [a for a in found if a in {"saveImageToPhotosAlbum", "saveVideoToPhotosAlbum"}]
+    shared = [a for a in found if a in {"onShareAppMessage", "onShareTimeline", "shareAppMessage"}]
+    if generated or saved or shared:
+        rep.add("内容安全", "WARN", "内容处理路径需人工核查",
+                f"本地生成 {generated}；相册保存 {saved}；分享 {shared}",
+                "不要把临时文件、相册保存与传播视为同一件事。按实际数据流和官方 5.18 核查过滤机制")
     social_hits = []
-    for p in iter_files(root, CODE_EXT | {".json"}):
-        text = read_text(p, 300_000)
-        for w in SOCIAL_WORDS:
-            if w in text:
-                social_hits.append((w, str(p.relative_to(root))))
+    for p in iter_files(root, CODE_EXT):
+        text = visible_text(p)
+        social_hits.extend((w, str(p.relative_to(root))) for w in SOCIAL_WORDS if w in text)
     if social_hits:
-        words = sorted({w for w, _ in social_hits})
-        rep.add("内容安全", "WARN", f"出现社交/传播类词汇：{words}",
+        rep.add("内容安全", "WARN", f"界面文本出现社交相关用语：{sorted({w for w, _ in social_hits})}",
                 "示例位置：" + "、".join(sorted({f for _, f in social_hits})[:3]),
-                "工具类目的边界是「无传播分享/公开访问」（图片处理、备忘录都是这么写的）。"
-                "带社区/评论/排行榜等功能属于社交范畴，个人主体拿不到该类目")
+                "核对实际功能与已选类目的边界；用语命中不等于已经具有公开传播功能")
 
 
 def check_unfinished(rep, root):
-    """提审节奏：未完成品痕迹"""
+    """只检查模板可见文本候选，不从注释或变量名推断产品未完成。"""
     hits = []
-    for p in iter_files(root, TEXT_EXT):
-        text = read_text(p, 500_000)
-        for w in UNFINISHED_WORDS:
-            if w in text:
-                hits.append((w, str(p.relative_to(root))))
-    if hits:
-        words = sorted({w for w, _ in hits})
-        rep.add("提审节奏", "FAIL", f"发现未完成品痕迹：{words}",
-                "示例位置：" + "、".join(sorted({f for _, f in hits})[:3]),
-                "官方 3.3-1：提交的小程序须是完成品，不可为测试版。"
-                "「即将上线」「敬请期待」这类字样会被直接驳，提审前全部清掉")
-    else:
-        rep.add("提审节奏", "PASS", "未发现未完成品痕迹")
-
-    # 账号体系 -> 需要测试号
-    has_login = False
     for p in iter_files(root, CODE_EXT):
-        text = read_text(p, 200_000)
-        if re.search(r"\b(wx\.login|uni\.login)\b", text):
-            has_login = True
-            break
-    if has_login:
-        rep.add("提审节奏", "WARN", "检测到登录逻辑（wx.login / uni.login）",
-                "有账号体系的小程序",
-                "官方 3.3-4：须提供测试号（账号+密码，可体验所有功能），提审时填进备注。"
-                "另外须有易于发现的「退出」入口（官方 3.5-5）")
+        text = visible_text(p)
+        for word in UNFINISHED_WORDS:
+            matched = re.search(r"\bbeta\b", text, re.I) if word.lower() == "beta" else word in text
+            if matched:
+                hits.append((word, str(p.relative_to(root))))
+    if hits:
+        rep.add("提审节奏", "WARN", f"界面文本命中待核查文案：{sorted({w for w, _ in hits})}",
+                "示例位置：" + "、".join(sorted({f for _, f in hits})[:3]),
+                "人工确认是否为未开放功能或测试提示；词表不能替代完成品验收（官方 3.3-1）")
     else:
-        rep.add("提审节奏", "PASS", "未检测到账号体系，无需提供测试号")
+        rep.add("提审节奏", "PASS", "模板文本未检出待核查的未完成提示",
+                "不扫描注释和内部变量；运行时生成文案仍需实际检查")
+    has_login = any("login" in api_names(p, {"login": "登录"}) for p in iter_files(root, CODE_EXT))
+    if has_login:
+        rep.add("提审节奏", "WARN", "检出 wx.login / uni.login 调用线索",
+                "登录调用本身不证明存在账号密码体系",
+                "若审核需要登录体验，按实际账号体系提供可用测试方式（官方 3.3-4）")
+    else:
+        rep.add("提审节奏", "PASS", "本次扫描未检出直接登录调用",
+                "别名、动态调用及其他登录方式需人工核查")
 
 
 def check_size(rep, root, app_json_data):
@@ -471,38 +634,48 @@ def check_gate_reminders(rep):
 # ---------------------------------------------------------------- 入口
 
 def main():
-    ap = argparse.ArgumentParser(description="小程序提审预检")
+    ap = argparse.ArgumentParser(description="小程序提审静态预检：风险线索不等于审核结论")
     ap.add_argument("root", help="小程序项目根目录")
     ap.add_argument("--md", help="同时把报告写到这个 .md 文件")
     args = ap.parse_args()
-
     root = Path(args.root).expanduser().resolve()
     if not root.is_dir():
         print(f"[错误] 目录不存在：{root}", file=sys.stderr)
         return 2
-
     cfg_path, cfg_kind = find_config(root)
-    cfg_data = None
-    if cfg_path:
-        cfg_data = loads_lenient(read_text(cfg_path))
-        if cfg_data is None:
-            print(f"[提示] 配置解析失败（{cfg_path.name}），跳过配置相关检查", file=sys.stderr)
-
+    if cfg_path is None:
+        print("[错误] 找不到 app.json / pages.json，未执行检查", file=sys.stderr)
+        return 2
+    cfg_data = loads_lenient(read_text(cfg_path))
+    if not isinstance(cfg_data, dict):
+        print(f"[错误] 配置解析失败或顶层不是对象：{cfg_path}，未执行检查", file=sys.stderr)
+        return 2
+    if "pages" in cfg_data and not isinstance(cfg_data["pages"], list):
+        print(f"[错误] pages 必须是数组：{cfg_path}，未执行检查", file=sys.stderr)
+        return 2
+    if cfg_kind == "app.json" and any(not isinstance(p, str) or not p.strip() for p in cfg_data.get("pages", [])):
+        print(f"[错误] app.json 的 pages 项必须是非空路径字符串：{cfg_path}", file=sys.stderr)
+        return 2
+    scan_root = cfg_path.parent
     rep = Report()
+    if cfg_kind == "app.json" and not cfg_data.get("pages"):
+        rep.add("提审节奏", "FAIL", "app.json 缺少非空 pages 入口列表",
+                "原生小程序需要在 pages 中声明入口页面", "按实际项目配置入口页面后重新运行")
     check_name(rep, cfg_data, cfg_kind, root)
     check_gate_reminders(rep)
-    check_privacy(rep, root)
-    check_content_safety(rep, root)
-    check_unfinished(rep, root)
-    check_size(rep, root, cfg_data)
-
-    out = rep.render(root, cfg_path, cfg_kind)
+    check_privacy(rep, scan_root)
+    check_content_safety(rep, scan_root)
+    check_unfinished(rep, scan_root)
+    check_size(rep, scan_root, cfg_data)
+    out = rep.render(root, cfg_path, cfg_kind, scan_root)
     print(out)
-
     if args.md:
-        Path(args.md).write_text(out, encoding="utf-8")
-        print(f"\n[已写入] {args.md}", file=sys.stderr)
-
+        try:
+            Path(args.md).write_text(out, encoding="utf-8")
+        except OSError as exc:
+            print(f"[错误] 报告写入失败：{exc}", file=sys.stderr)
+            return 2
+        print(f"[已写入] {args.md}", file=sys.stderr)
     return 1 if rep.count("FAIL") else 0
 
 

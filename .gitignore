@@ -13,3 +13,4 @@ Thumbs.db
 # 项目本地
 *.log
 报告.md
+/dist/
