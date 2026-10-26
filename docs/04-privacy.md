@@ -1,7 +1,7 @@
 # 04 · 隐私与数据
 
 这一关有个反直觉的事实：**你申请得越少，越容易过。**
-但还有一个更反直觉的：**配好了不代表生效，审核通过才生效。**
+但还有一个更反直觉的：配好了不代表生效，审核通过才生效。
 
 ## 一、官方规则原文
 
@@ -17,35 +17,35 @@
 
 平台的隐私审核**跟着接口走**。没调隐私接口，就没有隐私审核这一项。
 
-所以第一件事不是「怎么写隐私政策」，是**「我到底需不需要这些权限」**。
+所以先确认要不要这些权限，再考虑隐私政策怎么写。
 
 ## 三、需要隐私授权的高危接口清单
 
 ```
 身份类
-  wx.getUserProfile        获取用户信息（头像昵称）
-  wx.getUserInfo           旧版获取用户信息
-  wx.getPhoneNumber        获取手机号
-  wx.login + 后端换 openid  不算隐私接口，但会拿到用户标识
+wx.getUserProfile        获取用户信息（头像昵称）
+wx.getUserInfo           旧版获取用户信息
+wx.getPhoneNumber        获取手机号
+wx.login + 后端换 openid  不算隐私接口，但会拿到用户标识
 
 位置类
-  wx.getLocation           获取位置
-  wx.chooseLocation        选择位置
-  wx.onLocationChange      持续定位（审核最严）
-  wx.startLocationUpdate   开启定位
+wx.getLocation           获取位置
+wx.chooseLocation        选择位置
+wx.onLocationChange      持续定位（审核最严）
+wx.startLocationUpdate   开启定位
 
 相册/摄像头
-  wx.chooseImage           选图（旧版）
-  wx.chooseMedia           选图/视频
-  wx.chooseVideo           选视频
-  wx.saveImageToPhotosAlbum  存图到相册
-  wx.saveVideoToPhotosAlbum  存视频到相册
-  wx.createCameraContext   相机
+wx.chooseImage           选图（旧版）
+wx.chooseMedia           选图/视频
+wx.chooseVideo           选视频
+wx.saveImageToPhotosAlbum  存图到相册
+wx.saveVideoToPhotosAlbum  存视频到相册
+wx.createCameraContext   相机
 
 通讯录/其他
-  wx.chooseAddress         收货地址
-  wx.addPhoneContact       添加手机联系人
-  wx.getClipboardData      读剪贴板
+wx.chooseAddress         收货地址
+wx.addPhoneContact       添加手机联系人
+wx.getClipboardData      读剪贴板
 ```
 
 **搜法**
@@ -66,15 +66,15 @@ grep -rn "getUserProfile\|getUserInfo\|getLocation\|chooseImage\|chooseMedia\|sa
 | `wx.getPhoneNumber` | 收集你的手机号 |
 
 ⚠️ `wx.chooseMedia` 在官方对应表里**只挂在「照片或视频信息」下**，「摄像头」那一栏没列它。
-所以**只勾「照片或视频信息」就能让 chooseMedia 跑起来**。勾摄像头是因为代码里 `sourceType` 带了 `'camera'`，属于如实申报，不是必须。
+所以只勾「照片或视频信息」就能让 chooseMedia 跑起来。勾摄像头是因为代码里 `sourceType` 带了 `'camera'`，属于如实申报，不是必须。
 
-## 五、⭐ 最要命的一条：审核通过后才生效
+## 五、最要命的一条：审核通过后才生效
 
 《用户隐私保护指引填写说明》原文：
 > 入口1：「账号设置 - 服务内容声明 - 用户隐私保护指引 - 去完善」
 > 开发者可随时基于小程序现网版本进行隐私协议的完善或更新，**审核通过后即可生效**。
 
-**所以后台显示「审核中」时，接口一定报这个错：**
+所以后台显示「审核中」时，接口一定报这个错：
 
 ```
 chooseMedia:fail api scope is not declared in the privacy agreement
@@ -83,12 +83,12 @@ errno: 112
 
 翻译：这个接口涉及的个人信息，你没在指引里声明过，**或者声明了但还没生效**。
 
-**这不是 bug，不是缓存，不是基础库版本问题。**
+这不是 bug，不是缓存，不是基础库版本问题。
 清缓存、重新编译、换手机、更新开发者工具 —— **四招全部无效**，只能等审核通过。
 
 通过后约 **5 分钟**生效，回开发者工具重新编译再试。
 
-**唯一判断标准：后台指引状态是不是「已通过」。** 不是「已提交」、不是「审核中」。
+唯一判断标准：后台指引状态是不是「已通过」。 不是「已提交」、不是「审核中」。
 
 ## 六、⚠️ 一条被广泛传错的配置
 
@@ -97,10 +97,10 @@ errno: 112
 "__usePrivacyCheck__": true
 ```
 
-**这个开关只在 2023-09-15 ~ 2023-10-17 的过渡期有效，现在（2026 年）早已失效。**
+这个开关只在 2023-09-15 ~ 2023-10-17 的过渡期有效，现在（2026 年）早已失效。
 设成 `false` 也没用，设成 `true` 也不起任何作用。别在这上面浪费时间。
 
-**2026 年真正决定能不能调接口的，只有后台那份《用户隐私保护指引》是否审核通过。**
+2026 年真正决定能不能调接口的，只有后台那份《用户隐私保护指引》是否审核通过。
 
 ## 七、填表模板（直接照抄）
 
@@ -137,11 +137,11 @@ errno: 112
 ```
 1. 浏览器打开 mp.weixin.qq.com，用小程序管理员微信扫码登录
 2. 左侧菜单「管理 → 账号设置」（进去后页面标题就是「设置」）
-   ⚠️ 中间没有「基本设置」这一层
+⚠️ 中间没有「基本设置」这一层
 3. 找「服务内容声明」→「用户隐私保护指引」→ 点「去更新」/「修改」
 4. 按上面的模板逐项勾选 + 填用途说明
 5. 提交 → 等审核（通常 1~3 个工作日）
-6. ⭐ 等状态从「审核中」变「已通过」
+6. 等状态从「审核中」变「已通过」
 7. 通过后约 5 分钟 → 回开发者工具重新编译 → 真机验证
 8. 全流程走通 → 才去点「提交审核」
 ```
@@ -150,7 +150,7 @@ errno: 112
 
 提审表单里有「用户隐私保护指引设置」这一栏。
 
-**必须选「采集用户隐私」并如实填写，不要图省事选「未采集」。**
+必须选「采集用户隐私」并如实填写，不要图省事选「未采集」。
 
 官方原文：
 > `{ "errMsg": "A:fail appid privacy api banned" }`
@@ -163,7 +163,7 @@ errno: 112
 
 | 现象 | 原因 |
 |---|---|
-| 提交后仍报 `scope not declared` | ⭐ **指引还在「审核中」（未生效）**，唯一解法是等 |
+| 提交后仍报 `scope not declared` | **指引还在「审核中」（未生效）**，唯一解法是等 |
 | 提示「请先完成主体信息登记」 | 小程序注册流程没走完 |
 | 选图正常，但保存到相册报错 | 漏勾「相册（仅写入）权限」 |
 | 选图正常，但拍照报错 | 漏勾「摄像头」 |
