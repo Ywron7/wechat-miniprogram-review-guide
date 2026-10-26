@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 微信官方文档
+    url: https://developers.weixin.qq.com/miniprogram/product/reject.html
+    about: 规则以官方为准，遇到冲突先查这里

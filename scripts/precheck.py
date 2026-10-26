@@ -339,7 +339,7 @@ def check_privacy(rep, root):
             "脚本读不到 mp 后台",
             "① 每个隐私接口都能对应到后台勾选的一项 ② 状态必须是「已通过」不是「审核中」"
             "（审核中时接口一定报 scope not declared，清缓存换机都无效）"
-            "③ 提审表单隐私栏必须选「采集用户隐私」。详见 docs/04-隐私.md")
+            "③ 提审表单隐私栏必须选「采集用户隐私」。详见 docs/04-privacy.md")
 
 
 def check_content_safety(rep, root):
@@ -368,7 +368,7 @@ def check_content_safety(rep, root):
         files = info["files"][:3]
         rep.add("内容安全", "WARN", f"发现 {api}（{info['desc']}）",
                 "出现在：" + "、".join(files) + ("…" if len(info["files"]) > 3 else ""),
-                "见 docs/05-内容安全.md")
+                "见 docs/05-content-safety.md")
 
     if produces and leaves:
         rep.add("内容安全", "FAIL",
@@ -457,15 +457,15 @@ def check_gate_reminders(rep):
     rep.add("类目", "WARN", "类目无法静态扫描，需人工确认",
             "脚本读不到后台配置",
             "① 核心功能能在个人开放类目清单里找到一行 ② 每个类目首页 2 次点击内可达 "
-            "③ 已填类目 ≤ 5 ④ 无传播/分享/公开访问功能。详见 docs/02-服务类目.md")
+            "③ 已填类目 ≤ 5 ④ 无传播/分享/公开访问功能。详见 docs/02-categories.md")
     rep.add("备案", "WARN", "备案状态无法静态扫描，需人工确认",
             "脚本读不到备案后台",
             "① 备注无禁词（电商/付费/广告/商用/卖家）② 地址精确到门牌号且与身份证一致 "
-            "③ 备注写的功能 = 实际有的功能。详见 docs/03-备案.md")
+            "③ 备注写的功能 = 实际有的功能。详见 docs/03-icp-filing.md")
     rep.add("名称", "WARN", "注册名称无法静态扫描，需人工确认",
             "脚本只能扫代码里的标题，读不到后台注册名称",
             "① 名字里无营销词、无通用品类词 ② 是「造词/品牌词+功能词」结构 "
-            "③ 后台「还能修改 N 次」已截图且 N≥1。详见 docs/01-名称.md")
+            "③ 后台「还能修改 N 次」已截图且 N≥1。详见 docs/01-naming.md")
 
 
 # ---------------------------------------------------------------- 入口
