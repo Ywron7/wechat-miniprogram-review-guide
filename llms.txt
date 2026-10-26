@@ -20,14 +20,14 @@
 
 ## 文档
 
-- [速查清单](docs/00-quick-checklist.md): 一页纸打勾版，六道闸共 40 项 checkbox
+- [速查清单](docs/00-quick-checklist.md): 一页纸打勾版，六项检查共 40 项 checkbox
 - [名称规则](docs/01-naming.md): 两种驳回理由逐字对照、营销词/通用词表、3 种能过的命名结构、改名额度机制
 - [服务类目](docs/02-categories.md): 个人主体全类目清单、图片处理与备忘录的边界条款、5 槽上限
 - [ICP 备案](docs/03-icp-filing.md): 九步流程、真实驳回复盘、三套备注模板、禁词表、身份证有效期
 - [隐私与数据](docs/04-privacy.md): 17 个隐私接口清单、scope not declared 真因、四份填表模板、报错对照表
 - [内容安全 5.18](docs/05-content-safety.md): 五项永久限制、平台三个「不看」、三条解法与成本测算、申诉三段式
 - [提审节奏](docs/06-review-process.md): 实测时长、提审表单 7 字段、截图规范、驳回理由对照表、真机验证 9 项
-- [官方条款索引](docs/07-official-clauses.md): 《常见拒绝情形》40+ 条，每条标注对应哪一闸
+- [官方条款索引](docs/07-official-clauses.md): 《常见拒绝情形》40+ 条，每条标注对应哪一项
 - [小游戏 vs 小程序](docs/08-minigame.md): 四处硬差异、免版号公式、软著实为选填、适龄提示填法、8 张截图规范
 
 ## 工具

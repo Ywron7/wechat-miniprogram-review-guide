@@ -3,7 +3,7 @@
 """
 小程序提审预检 · precheck.py
 
-静态扫描微信小程序项目，按提审六道闸输出 PASS / WARN / FAIL 报告。
+静态扫描微信小程序项目，按提审六项检查输出 PASS / WARN / FAIL 报告。
 不联网、不上传、不修改任何文件。
 
 用法:
@@ -233,10 +233,10 @@ def read_manifest_name(root):
     return ""
 
 
-# ---------------------------------------------------------------- 各闸检查
+# ---------------------------------------------------------------- 各项检查
 
 def check_name(rep, cfg_data, cfg_kind, root):
-    """名称闸：注册名（manifest）+ 各页标题文字里的营销词 / 通用词"""
+    """名称：注册名（manifest）+ 各页标题文字里的营销词 / 通用词"""
     if not cfg_data:
         rep.add("名称", "WARN", "无法读取项目配置，跳过标题检查",
                 "脚本既没找到 app.json 也没找到 pages.json",
@@ -303,7 +303,7 @@ def check_name(rep, cfg_data, cfg_kind, root):
 
 
 def check_privacy(rep, root):
-    """隐私闸：扫隐私接口"""
+    """隐私：扫隐私接口"""
     hits = {}
     for p in iter_files(root, CODE_EXT):
         text = read_text(p)
@@ -343,7 +343,7 @@ def check_privacy(rep, root):
 
 
 def check_content_safety(rep, root):
-    """内容安全闸：内容产出 + 外流路径"""
+    """内容安全：内容产出 + 外流路径"""
     found = {}
     for p in iter_files(root, CODE_EXT):
         text = read_text(p)
@@ -395,7 +395,7 @@ def check_content_safety(rep, root):
 
 
 def check_unfinished(rep, root):
-    """提审节奏闸：未完成品痕迹"""
+    """提审节奏：未完成品痕迹"""
     hits = []
     for p in iter_files(root, TEXT_EXT):
         text = read_text(p, 500_000)
@@ -453,7 +453,7 @@ def check_size(rep, root, app_json_data):
 
 
 def check_gate_reminders(rep):
-    """无法静态扫描的闸，给提醒"""
+    """无法静态扫描的项，给提醒"""
     rep.add("类目", "WARN", "类目无法静态扫描，需人工确认",
             "脚本读不到后台配置",
             "① 核心功能能在个人开放类目清单里找到一行 ② 每个类目首页 2 次点击内可达 "
