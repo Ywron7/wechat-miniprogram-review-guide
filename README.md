@@ -94,14 +94,18 @@ python scripts/precheck.py <你的小程序项目根目录>
 
 ## 给 AI agent 用
 
-这个仓库是**给人读的**。如果你想让 AI 直接执行检查，去 [Releases](../../releases) 下 skill 包：
+这个仓库是**给人读的**。如果你想让 AI 直接执行检查，去 [Releases](../../releases) 下 `mp-review-guard.zip`。
 
-| 文件 | 是什么 |
-|---|---|
-| `mp-review-check.zip` | 轻量版：六道闸判据 + 执行流程，不含脚本 |
-| `mp-review-guard.zip` | 完整版：改法 + 预检脚本 + 申诉/备案模板 |
+解压后把文件夹放进你的 skills 目录（如 `~/.claude/skills/`、`~/.qoder/skills/`），AI 会读 `SKILL.md` 按 Step 0~4 执行。
 
-解压后把文件夹放进你的 skills 目录（如 `~/.claude/skills/`、`~/.qoder/skills/`、WorkBuddy 的技能目录），AI 会读 `SKILL.md` 按 Step 0~4 执行。
+**包里有：**
+
+```
+SKILL.md              执行流程（前置检查 → 跑脚本 → 读文档 → 人工确认 → 固定输出）
+references/           六道闸判据（名称/类目/备案/隐私/内容安全/提审节奏 + 条款索引）
+scripts/precheck.py   静态预检脚本
+templates/            驳回申诉、备案备注、自检报告
+```
 
 **两者定位不同，别混：**
 
@@ -109,6 +113,8 @@ python scripts/precheck.py <你的小程序项目根目录>
 这个仓库   → 人读，完整规则 + 条款索引 + 案例
 skill 包   → agent 执行，固定流程 + 固定输出格式
 ```
+
+全部内容都在这个仓库里，没有保留版本。
 
 ---
 
