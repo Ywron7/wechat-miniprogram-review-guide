@@ -137,6 +137,7 @@ python scripts/precheck.py <你的小程序项目根目录>
 | [05 · 内容安全 5.18](docs/05-content-safety.md) | 五项永久限制、平台三个「不看」、三条解法与成本 |
 | [06 · 提审节奏](docs/06-review-process.md) | 实测时长、提审表单 7 字段、截图规范 |
 | [07 · 官方条款索引](docs/07-official-clauses.md) | 40+ 条官方条款速查，写申诉时引条款号 |
+| [08 · 小游戏 vs 小程序](docs/08-minigame.md) | 做小游戏的先看这份：备案必须先过才能提审、免版号公式、8 张截图规范 |
 
 ---
 
